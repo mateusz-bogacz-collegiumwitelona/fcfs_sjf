@@ -1,0 +1,1 @@
+Proste programy mające na celu przedstawić działanie algorytmów FCFS i SJF
