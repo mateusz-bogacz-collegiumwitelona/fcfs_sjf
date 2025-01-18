@@ -1,228 +1,241 @@
 import csv
 import time
 from datetime import datetime
-from prettytable import PrettyTable
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+from prettytable import PrettyTable
 import os
+import sys
 
-def findWaitingTime(processes, n, bt, wt):
-    wt[0] = 0
-    for i in range(1, n):
-        wt[i] = bt[i - 1] + wt[i - 1]
+class ProcessState:
+    NEW = "Nowy"
+    READY = "Gotowy"
+    RUNNING = "Aktywny"
+    WAITING = "Czekający"
+    TERMINATED = "Zakończony"
 
-def findTurnAroundTime(processes, n, bt, wt, tat):
-    for i in range(n):
-        tat[i] = bt[i] + wt[i]
+class Process:
+    def __init__(self, pid, burst_time, arrival_time=0):
+        self.pid = pid
+        self.burst_time = burst_time
+        self.arrival_time = arrival_time
+        self.waiting_time = 0
+        self.turnaround_time = 0
+        self.completion_time = 0
+        self.response_time = 0
+        self.start_time = 0
+        self.state = ProcessState.NEW
+        self.progress = 0 
 
-def animate_process(process, burst_time, report_file):
-    start_time = time.time()
-    print(f"Proces {process} wykonuje się przez {burst_time} jednostek czasu.")
+class FCFSScheduler:
+    def __init__(self):
+        self.processes = []
+        self.current_time = 0
+        self.performance_metrics = {
+            'avg_waiting_time': 0,
+            'avg_turnaround_time': 0,
+            'cpu_utilization': 0,
+            'throughput': 0
+        }
+        
+    def add_process(self, process):
+        self.processes.append(process)
+        
+    def calculate_times(self):
+        if not self.processes:
+            return
+            
+        current_time = 0
+        for process in self.processes:
+            process.start_time = current_time
+            process.waiting_time = current_time - process.arrival_time
+            current_time += process.burst_time
+            process.completion_time = current_time
+            process.turnaround_time = process.completion_time - process.arrival_time
+            process.response_time = process.waiting_time
+
+        self._calculate_performance_metrics()
+
+    def _calculate_performance_metrics(self):
+        n = len(self.processes)
+        total_burst_time = sum(p.burst_time for p in self.processes)
+        max_completion = max(p.completion_time for p in self.processes)
+        
+        self.performance_metrics['avg_waiting_time'] = sum(p.waiting_time for p in self.processes) / n
+        self.performance_metrics['avg_turnaround_time'] = sum(p.turnaround_time for p in self.processes) / n
+        self.performance_metrics['cpu_utilization'] = (total_burst_time / max_completion) * 100
+        self.performance_metrics['throughput'] = n / max_completion
+
+    def generate_report(self):
+        timestamp = datetime.now().strftime("%d_%m_%Y_%H_%M_%S")
+        filename = f"fcfs_report_{timestamp}.txt"
+        
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(f"=== Raport z wykonania algorytmu FCFS ===\n")
+            f.write(f"Data wygenerowania: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            
+            f.write("1. Informacje o procesach:\n")
+            f.write("-" * 50 + "\n")
+            f.write(f"{'PID':<5} {'Czas wykonania':<15} {'Czas oczekiwania':<15} "
+                   f"{'Czas przetwarzania':<15} {'Czas odpowiedzi':<15}\n")
+            
+            for p in self.processes:
+                f.write(f"{p.pid:<5} {p.burst_time:<15} {p.waiting_time:<15} "
+                       f"{p.turnaround_time:<15} {p.response_time:<15}\n")
+            
+            f.write("\n2. Metryki wydajności:\n")
+            f.write("-" * 50 + "\n")
+            f.write(f"Średni czas oczekiwania: {self.performance_metrics['avg_waiting_time']:.2f}\n")
+            f.write(f"Średni czas przetwarzania: {self.performance_metrics['avg_turnaround_time']:.2f}\n")
+            f.write(f"Wykorzystanie CPU: {self.performance_metrics['cpu_utilization']:.2f}%\n")
+            f.write(f"Przepustowość: {self.performance_metrics['throughput']:.2f} procesów/jednostkę czasu\n")
+            
+            f.write("\n3. Szczegóły wykonania:\n")
+            f.write("-" * 50 + "\n")
+            for p in self.processes:
+                f.write(f"\nProces P{p.pid}:\n")
+                f.write(f"- Czas rozpoczęcia: {p.start_time}\n")
+                f.write(f"- Czas zakończenia: {p.completion_time}\n")
+                f.write(f"- Całkowity czas wykonania: {p.burst_time}\n")
+            
+            f.write("\n4. Podsumowanie:\n")
+            f.write("-" * 50 + "\n")
+            f.write(f"Całkowita liczba procesów: {len(self.processes)}\n")
+            f.write(f"Całkowity czas wykonania: {max(p.completion_time for p in self.processes)}\n")
+            
+    def _update_process_states(self, current_time):
+        for process in self.processes:
+            if current_time < process.start_time:
+                process.state = ProcessState.NEW
+            elif current_time >= process.completion_time:
+                process.state = ProcessState.TERMINATED
+                process.progress = 100
+            elif current_time >= process.start_time:
+                process.state = ProcessState.RUNNING
+                process.progress = ((current_time - process.start_time) / process.burst_time) * 100
+            else:
+                process.state = ProcessState.READY
+                process.progress = 0
+
+    def create_animation(self):
+        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 10), height_ratios=[2, 2, 1])
+        fig.suptitle('Wizualizacja algorytmu FCFS (First-Come-First-Served)', fontsize=16)
+        
+        total_time = sum(p.burst_time for p in self.processes)
+        
+        def init():
+            ax1.clear()
+            ax2.clear()
+            ax3.clear()
+            return []
+
+        def animate(frame):
+            ax1.clear()
+            ax2.clear()
+            ax3.clear()
+            
+            current_time = frame / 10 * total_time if frame < 10 else total_time
+            
+            self._update_process_states(current_time)
+            
+            ax1.set_xlim(0, total_time)
+            ax1.set_ylim(0, len(self.processes) + 1)
+            ax1.set_title('Harmonogram procesów FCFS')
+            ax1.set_xlabel('Czas')
+            ax1.set_ylabel('Procesy')
+            
+            colors = {
+                ProcessState.NEW: 'lightgray',
+                ProcessState.READY: 'yellow',
+                ProcessState.RUNNING: 'lightgreen',
+                ProcessState.TERMINATED: 'lightblue'
+            }
+            
+            for i, process in enumerate(self.processes):
+                if current_time > process.start_time:
+                    progress = min(current_time - process.start_time, process.burst_time)
+                    ax1.barh(i + 1, progress, left=process.start_time, 
+                            color=colors[process.state], alpha=0.8)
+                    ax1.text(process.start_time + progress/2, i + 1, 
+                            f'P{process.pid} ({process.state}\n{process.progress:.0f}%)',
+                            ha='center', va='center')
+                ax1.text(-0.5, i + 1, f'P{process.pid}', ha='right', va='center')
+
+            ax1.axvline(x=current_time, color='red', linestyle='--', alpha=0.5)
+            
+            ax2.set_title('Metryki procesów')
+            ax2.set_xlim(0, max(p.completion_time for p in self.processes))
+            ax2.set_ylim(0, len(self.processes) + 1)
+            
+            for i, process in enumerate(self.processes):
+                if current_time > process.start_time:
+
+                    ax2.barh(i + 1, process.waiting_time, color='pink', alpha=0.5,
+                            label='Czas oczekiwania')
+                    
+                    progress = min(current_time - process.start_time, process.burst_time)
+                    ax2.barh(i + 1, progress, left=process.waiting_time, 
+                            color='lightgreen', alpha=0.8, label='Czas wykonania')
+                    
+                    ax2.text(0, i + 1, f'Oczekiwanie: {process.waiting_time}',
+                            ha='left', va='bottom')
+                    ax2.text(process.waiting_time + progress, i + 1, 
+                            f'Wykonanie: {progress:.1f}',
+                            ha='right', va='bottom')
+                            
+                ax2.text(-0.5, i + 1, f'P{process.pid}', ha='right', va='center')
+            
+            ax3.axis('off')
+            status_text = (
+                f"Czas systemowy: {current_time:.1f}\n"
+                f"Średni czas oczekiwania: {self.performance_metrics['avg_waiting_time']:.2f}\n"
+                f"Wykorzystanie CPU: {self.performance_metrics['cpu_utilization']:.1f}%\n"
+                f"Przepustowość: {self.performance_metrics['throughput']:.2f} proc/jedn\n"
+                "\nKamienie milowe:\n"
+            )
+            
+            milestones = []
+            for p in self.processes:
+                if current_time >= p.start_time and p.state != ProcessState.NEW:
+                    milestones.append(f"P{p.pid}: {p.state} ({p.progress:.0f}%)")
+            
+            status_text += "\n".join(milestones)
+            ax3.text(0.02, 0.98, status_text, ha='left', va='top', 
+                    transform=ax3.transAxes, fontfamily='monospace')
+            
+            plt.tight_layout()
+            return []
+
+        anim = animation.FuncAnimation(fig, animate, init_func=init,
+                                     frames=12, interval=500, blit=True)
+        
+        def on_close(event):
+            plt.close('all')
+            
+        fig.canvas.mpl_connect('close_event', on_close)
+        plt.show(block=True)
+        plt.close('all')
+
+def main():
+    scheduler = FCFSScheduler()
+    
     try:
-        report_file.write(f"\nRozpoczęto proces {process} o czasie {datetime.now().strftime('%H:%M:%S')}\n")
-        time.sleep(burst_time * 0.5)
-        end_time = time.time()
-        execution_time = end_time - start_time
-        print(f"Proces {process} zakończony.")
-        report_file.write(f"Zakończono proces {process} o czasie {datetime.now().strftime('%H:%M:%S')}\n")
-        report_file.write(f"Rzeczywisty czas wykonania: {execution_time:.2f} sekund\n")
-    except IOError as e:
-        print(f"Błąd podczas zapisu do pliku raportu: {e}")
-
-def create_fcfs_animation(processes, burst_times):
-    n = len(processes)
-    wait_times = [0] * n
-    for i in range(1, n):
-        wait_times[i] = wait_times[i-1] + burst_times[i-1]
-    
-    completion_times = [wait_times[i] + burst_times[i] for i in range(n)]
-    total_time = sum(burst_times)
-    
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8))
-    fig.suptitle('Wizualizacja algorytmu FCFS', fontsize=16)
-    
-    def init():
-        ax1.clear()
-        ax2.clear()
-        return []
-
-    def animate(frame):
-        ax1.clear()
-        ax2.clear()
+        with open("data.csv", "r") as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                process = Process(
+                    int(row['Process']),
+                    int(row['BurstTime'])
+                )
+                scheduler.add_process(process)
+    except FileNotFoundError:
+        print("Błąd: Plik data.csv nie został znaleziony")
+        return
         
-        current_time = frame / 10 * total_time if frame < 10 else total_time
-        
-        ax1.set_xlim(0, total_time)
-        ax1.set_ylim(0, n + 1)
-        ax1.set_title('Harmonogram procesów')
-        ax1.set_xlabel('Czas')
-        ax1.set_ylabel('Procesy')
-        
-        for i in range(n):
-            if current_time > wait_times[i]:
-                progress = min(current_time - wait_times[i], burst_times[i])
-                ax1.barh(i + 1, progress, left=wait_times[i], color='skyblue', alpha=0.8)
-            ax1.text(-0.5, i + 1, f'P{processes[i]}', ha='right', va='center')
-        
-        ax1.axvline(x=current_time, color='red', linestyle='--', alpha=0.5)
-        
-        ax2.set_title('Statystyki procesów')
-        ax2.set_xlim(0, max(completion_times))
-        ax2.set_ylim(0, n + 1)
-        
-        for i in range(n):
-            if current_time > wait_times[i]:
-                ax2.barh(i + 1, wait_times[i], color='lightgray', alpha=0.5)
-            
-            if current_time > wait_times[i]:
-                progress = min(current_time - wait_times[i], burst_times[i])
-                ax2.barh(i + 1, progress, left=wait_times[i], color='skyblue', alpha=0.8)
-            
-            ax2.text(-0.5, i + 1, f'P{processes[i]}', ha='right', va='center')
-        
-        ax2.set_xlabel('Czas')
-        ax2.set_ylabel('Procesy')
-        
-        plt.tight_layout()
-        return []
-
-    anim = animation.FuncAnimation(fig, animate, init_func=init,
-                                 frames=12, interval=500, blit=True)
-    
-    return fig, anim
-
-def visualize_fcfs(processes, burst_times):
-    try:
-        fig, anim = create_fcfs_animation(processes, burst_times)
-        anim.save('fcfs_animation.gif', writer='pillow')
-        plt.show()
-    except Exception as e:
-        print(f"Błąd podczas tworzenia animacji: {e}")
-
-def generate_detailed_report(processes, n, bt, wt, tat, report_file):
-    try:
-        avg_wt = sum(wt) / n
-        max_wt = max(wt)
-        min_wt = min(wt)
-        avg_tat = sum(tat) / n
-        max_tat = max(tat)
-        min_tat = min(tat)
-        total_execution_time = sum(bt)
-        
-        report_file.write("\n=== SZCZEGÓŁOWY RAPORT SYMULACJI ===\n")
-        report_file.write(f"\nData i czas symulacji: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        
-        report_file.write("\n--- STATYSTYKI OGÓLNE ---\n")
-        report_file.write(f"Liczba procesów: {n}\n")
-        report_file.write(f"Całkowity czas wykonania: {total_execution_time} jednostek\n")
-        
-        report_file.write("\n--- CZASY OCZEKIWANIA ---\n")
-        report_file.write(f"Średni czas oczekiwania: {avg_wt:.2f} jednostek\n")
-        report_file.write(f"Maksymalny czas oczekiwania: {max_wt} jednostek\n")
-        report_file.write(f"Minimalny czas oczekiwania: {min_wt} jednostek\n")
-        
-        report_file.write("\n--- CZASY ZAKOŃCZENIA ---\n")
-        report_file.write(f"Średni czas zakończenia: {avg_tat:.2f} jednostek\n")
-        report_file.write(f"Maksymalny czas zakończenia: {max_tat} jednostek\n")
-        report_file.write(f"Minimalny czas zakończenia: {min_tat} jednostek\n")
-        
-        report_file.write("\n--- SZCZEGÓŁY PROCESÓW ---\n")
-        table = PrettyTable()
-        table.field_names = ["Proces", "Czas trwania", "Czas oczekiwania", "Czas zakończenia"]
-        for i in range(n):
-            table.add_row([processes[i], bt[i], wt[i], tat[i]])
-        report_file.write(str(table))
-        
-        report_file.write("\n\n--- ANALIZA WYDAJNOŚCI ---\n")
-        report_file.write(f"Wykorzystanie CPU: {(sum(bt)/max(tat))*100:.2f}%\n")
-        report_file.write(f"Średni throughput: {n/max(tat):.2f} procesów na jednostkę czasu\n")
-    except Exception as e:
-        print(f"Błąd podczas generowania raportu: {e}")
-
-def findavgTime(processes, n, bt):
-    wt = [0] * n
-    tat = [0] * n
-    total_wt = 0
-    total_tat = 0
-    
-    reports_dir = "reports"
-    os.makedirs(reports_dir, exist_ok=True)
-    
-    report_filename = os.path.join(reports_dir, f"fcfs_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
-    
-    try:
-        print(f"Próba utworzenia pliku raportu: {report_filename}")
-        with open(report_filename, "w", encoding='utf-8') as report_file:
-            report_file.write("=== ROZPOCZĘCIE SYMULACJI ===\n")
-            report_file.write(f"Liczba procesów: {n}\n")
-            report_file.write("Procesy wejściowe:\n")
-            for i in range(n):
-                report_file.write(f"Proces {processes[i]}: czas wykonania = {bt[i]}\n")
-            
-            findWaitingTime(processes, n, bt, wt)
-            findTurnAroundTime(processes, n, bt, wt, tat)
-            
-            for i in range(n):
-                total_wt += wt[i]
-                total_tat += tat[i]
-                animate_process(processes[i], bt[i], report_file)
-                print()
-            
-            avg_wt = total_wt / n
-            avg_tat = total_tat / n
-            
-            print(f"Średni czas oczekiwania = {avg_wt:.2f}\n")  
-            print(f"Średni czas zakończenia = {avg_tat:.2f}\n")  
-            
-            table = PrettyTable()
-            table.field_names = ["Proces", "Czas trwania", "Czas oczekiwania", "Czas zakończenia"]
-            
-            for i in range(n):
-                table.add_row([i + 1, bt[i], wt[i], tat[i]])
-            
-            print("\nPodsumowanie:")
-            print(table)
-            
-            generate_detailed_report(processes, n, bt, wt, tat, report_file)
-            
-            print(f"\nSzczegółowy raport został zapisany do pliku: {report_filename}")
-
-        visualize_fcfs(processes, bt)
-            
-    except PermissionError:
-        print(f"Błąd: Brak uprawnień do utworzenia pliku w lokalizacji: {report_filename}")
-        print("Spróbuj uruchomić program z odpowiednimi uprawnieniami lub zmień lokalizację zapisu.")
-    except IOError as e:
-        print(f"Błąd przy tworzeniu pliku raportu: {e}")
-        print(f"Próbowano utworzyć plik w: {report_filename}")
+    scheduler.calculate_times()
+    scheduler.generate_report()  
+    scheduler.create_animation()
+    sys.exit(0)  
 
 if __name__ == "__main__":
-    input_file = "./data.csv"
-    
-    try:
-        with open(input_file, "r") as file:
-            reader = csv.DictReader(file)
-            processes = []
-            burst_time = []
-            
-            for row in reader:
-                processes.append(int(row['Process']))
-                burst_time.append(int(row['BurstTime']))
-            
-            n = len(processes)
-            
-            if n == 0:
-                print("Brak danych do przetworzenia.")
-            else:
-                print(f"Wczytane procesy: {processes}")
-                print(f"Wczytane czasy trwania: {burst_time}\n")
-                findavgTime(processes, n, burst_time)
-                
-    except FileNotFoundError:
-        print(f"Błąd: Plik '{input_file}' nie został znaleziony.")
-    except KeyError:
-        print("Błąd: Plik CSV nie zawiera wymaganych nagłówków.")
-    except ValueError:
-        print("Błąd: Nieprawidłowy format danych w pliku.")
-    except Exception as e:
-        print(f"Wystąpił nieoczekiwany błąd: {e}")
+    main()
